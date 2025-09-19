@@ -1,0 +1,203 @@
+{
+  "name": "Reddit Crypto Ideas Analyzer",
+  "nodes": [
+    {
+      "id": "1",
+      "name": "Manual Trigger",
+      "type": "n8n-nodes-base.manualTrigger",
+      "position": [250, 300],
+      "parameters": {},
+      "typeVersion": 1
+    },
+    {
+      "id": "2",
+      "name": "Reddit - CryptoCurrency",
+      "type": "n8n-nodes-base.reddit",
+      "position": [450, 200],
+      "parameters": {
+        "resource": "post",
+        "operation": "getAll",
+        "subreddit": "CryptoCurrency",
+        "returnAll": false,
+        "limit": 25,
+        "filters": {
+          "category": "hot"
+        }
+      },
+      "typeVersion": 1
+    },
+    {
+      "id": "3",
+      "name": "Reddit - CryptoMarkets",
+      "type": "n8n-nodes-base.reddit",
+      "position": [450, 400],
+      "parameters": {
+        "resource": "post",
+        "operation": "getAll",
+        "subreddit": "CryptoMarkets",
+        "returnAll": false,
+        "limit": 25,
+        "filters": {
+          "category": "hot"
+        }
+      },
+      "typeVersion": 1
+    },
+    {
+      "id": "4",
+      "name": "Merge Reddit Posts",
+      "type": "n8n-nodes-base.merge",
+      "position": [650, 300],
+      "parameters": {
+        "mode": "combine",
+        "combineBy": "combineByFields",
+        "fieldsToMatchString": "id",
+        "joinMode": "keepEverything",
+        "outputDataFrom": "both",
+        "options": {
+          "fuzzyCompare": true,
+          "multipleMatches": "all"
+        }
+      },
+      "typeVersion": 3
+    },
+    {
+      "id": "5",
+      "name": "Filter & Analyze Posts",
+      "type": "n8n-nodes-base.code",
+      "position": [850, 300],
+      "parameters": {
+        "mode": "runOnceForAllItems",
+        "language": "js",
+        "code": "// Get all posts\nconst allPosts = $input.all().map(item => item.json);\n\n// Crypto-related keywords\nconst cryptoKeywords = ['bitcoin', 'btc', 'ethereum', 'eth', 'crypto', 'defi', 'nft', 'altcoin', 'blockchain', 'token', 'coin', 'hodl', 'bull', 'bear', 'pump', 'moon', 'satoshi', 'web3', 'metaverse', 'staking', 'mining', 'wallet', 'exchange', 'dex', 'cex', 'airdrop', 'ico', 'dao', 'yield', 'liquidity', 'trading', 'investment', 'solana', 'sol', 'cardano', 'ada', 'polygon', 'matic', 'avalanche', 'avax', 'chainlink', 'link', 'polkadot', 'dot', 'binance', 'bnb', 'xrp', 'ripple', 'dogecoin', 'doge', 'shiba', 'shib'];\n\nconst filteredPosts = [];\nconst seenIds = new Set();\n\nfor (const post of allPosts) {\n    // Skip if we've seen this post ID\n    if (post.id && seenIds.has(post.id)) continue;\n    if (post.id) seenIds.add(post.id);\n    \n    const titleLower = (post.title || '').toLowerCase();\n    const textLower = (post.selftext || '').toLowerCase();\n    \n    // Check if contains crypto keywords\n    const containsCrypto = cryptoKeywords.some(keyword => \n        titleLower.includes(keyword) || textLower.includes(keyword)\n    );\n    \n    if (containsCrypto) {\n        filteredPosts.push({\n            id: post.id || Math.random().toString(36).substr(2, 9),\n            title: post.title || '',\n            text: post.selftext ? post.selftext.substring(0, 300) : '',\n            score: post.score || 0,\n            num_comments: post.num_comments || 0,\n            url: post.permalink ? `https://reddit.com${post.permalink}` : '',\n            subreddit: post.subreddit || '',\n            created_utc: post.created_utc || Date.now() / 1000,\n            engagement: (post.score || 0) + ((post.num_comments || 0) * 3)\n        });\n    }\n}\n\n// Sort by engagement and get top 25\nfilteredPosts.sort((a, b) => b.engagement - a.engagement);\nconst topPosts = filteredPosts.slice(0, 25);\n\nconsole.log(`Filtered ${filteredPosts.length} crypto posts, returning top ${topPosts.length}`);\n\nreturn topPosts.map(post => ({ json: post }));"
+      },
+      "typeVersion": 2
+    },
+    {
+      "id": "6",
+      "name": "OpenAI Analysis",
+      "type": "n8n-nodes-base.openAi",
+      "position": [1050, 300],
+      "parameters": {
+        "operation": "message",
+        "model": "gpt-4o-mini",
+        "messages": {
+          "values": [
+            {
+              "role": "system",
+              "content": "You are a cryptocurrency market analyst. Analyze the provided Reddit posts and identify the TOP 10 crypto ideas/trends being discussed.\n\nFor each idea, provide these exact fields:\n- name: The cryptocurrency or project name\n- reason: Why it's trending (1-2 sentences)\n- sentiment: Bullish/Bearish/Neutral\n- risk: Low/Medium/High\n- takeaway: Key point (1 sentence)\n\nReturn as JSON with an 'ideas' array containing exactly 10 items."
+            }
+          ]
+        },
+        "prompt": {
+          "values": [
+            {
+              "role": "user",
+              "content": "Here are today's top crypto discussions from Reddit:\n\n{{ JSON.stringify($input.all().slice(0, 20).map((item, i) => ({ index: i+1, title: item.json.title, score: item.json.score, comments: item.json.num_comments }))) }}\n\nAnalyze and extract the top 10 crypto ideas."
+            }
+          ]
+        },
+        "options": {
+          "temperature": 0.3,
+          "responseFormat": {
+            "type": "json_object"
+          }
+        }
+      },
+      "typeVersion": 1.3
+    },
+    {
+      "id": "7",
+      "name": "Format Final Results",
+      "type": "n8n-nodes-base.code",
+      "position": [1250, 300],
+      "parameters": {
+        "mode": "runOnceForAllItems",
+        "language": "js",
+        "code": "const aiResponse = $input.first().json;\nconst now = new Date();\n\ntry {\n    // Parse response\n    let data;\n    if (typeof aiResponse === 'string') {\n        data = JSON.parse(aiResponse);\n    } else if (aiResponse.message?.content) {\n        const content = aiResponse.message.content;\n        data = typeof content === 'string' ? JSON.parse(content) : content;\n    } else if (aiResponse.content) {\n        data = typeof aiResponse.content === 'string' ? JSON.parse(aiResponse.content) : aiResponse.content;\n    } else {\n        data = aiResponse;\n    }\n    \n    const ideas = data.ideas || data.top_10 || [];\n    \n    return [{\n        json: {\n            success: true,\n            timestamp: now.toISOString(),\n            date: now.toISOString().split('T')[0],\n            source: 'Reddit (r/CryptoCurrency & r/CryptoMarkets)',\n            top_10_crypto_ideas: ideas.slice(0, 10),\n            total_analyzed: ideas.length,\n            summary: `Identified ${Math.min(ideas.length, 10)} trending crypto ideas from Reddit today`\n        }\n    }];\n} catch (error) {\n    return [{\n        json: {\n            success: false,\n            error: error.message,\n            timestamp: now.toISOString()\n        }\n    }];\n}"
+      },
+      "typeVersion": 2
+    }
+  ],
+  "connections": {
+    "Manual Trigger": {
+      "main": [
+        [
+          {
+            "node": "Reddit - CryptoCurrency",
+            "type": "main",
+            "index": 0
+          },
+          {
+            "node": "Reddit - CryptoMarkets",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Reddit - CryptoCurrency": {
+      "main": [
+        [
+          {
+            "node": "Merge Reddit Posts",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Reddit - CryptoMarkets": {
+      "main": [
+        [
+          {
+            "node": "Merge Reddit Posts",
+            "type": "main",
+            "index": 1
+          }
+        ]
+      ]
+    },
+    "Merge Reddit Posts": {
+      "main": [
+        [
+          {
+            "node": "Filter & Analyze Posts",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Filter & Analyze Posts": {
+      "main": [
+        [
+          {
+            "node": "OpenAI Analysis",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "OpenAI Analysis": {
+      "main": [
+        [
+          {
+            "node": "Format Final Results",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    }
+  },
+  "settings": {
+    "executionOrder": "v1",
+    "timezone": "America/New_York",
+    "saveDataErrorExecution": "all",
+    "saveDataSuccessExecution": "all",
+    "saveManualExecutions": true,
+    "saveExecutionProgress": true
+  }
+}
